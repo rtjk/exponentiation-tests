@@ -1,0 +1,11 @@
+
+G=16
+P=509
+Z=127
+exponents=1->127
+
+the exponents (1 to 127)
+
+G^x mod P
+
+use the shuffle instruction as a lookup table: shuffle(a[], b[]) returns c[] where c[i]=a[b[i]]
