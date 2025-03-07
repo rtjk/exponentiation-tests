@@ -9,3 +9,10 @@ the exponents (1 to 127)
 G^x mod P
 
 use the shuffle instruction as a lookup table: shuffle(a[], b[]) returns c[] where c[i]=a[b[i]]
+
+
+https://fastcpp.blogspot.com/2011/06/bilinear-pixel-interpolation-using-sse.html
+
+https://github.com/MrUnbelievable92/MaxMath/blob/4dfb9315940a9c152afe450c1b60aa8dfea62b71/Runtime/XSE%20Core/Shuffles/Variable%20Permute.cs#L25
+
+https://github.com/jviney/bilinear_filter_simd/blob/274f05aa58a358d08882867370173bfdbfc5f887/src/interpolate/bilinear_sse4.hpp#L45
