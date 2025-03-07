@@ -1,6 +1,6 @@
 from math import log2, ceil, floor
 
-x = 508*508*508 < 8339743
+x = 30
 
 y = bin(x)[2:]
 
