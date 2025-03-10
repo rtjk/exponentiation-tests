@@ -30,6 +30,7 @@ void print_m256i_16bit(__m256i var) {
 
 /******************************************************************************/
 
+// OK
 __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
     __m256i zeros  = _mm256_setzero_si256();
     __m256i cmask  = _mm256_sub_epi16(zeros, c);
