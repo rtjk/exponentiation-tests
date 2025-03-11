@@ -1,6 +1,7 @@
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <assert.h>
 
 void print_m256i_8bit(__m256i var) {
     unsigned char vals[32];
@@ -40,6 +41,18 @@ void print_m256i_16bit_asint(__m256i var) {
         printf("%d ", vals[i]);  // Print each value as a 4-digit hexadecimal number (16 bits)
     }
     printf("]\n");
+}
+
+long long mod_exp(long long base, long long exp, long long mod) {
+    long long result = 1;
+    while (exp > 0) {
+        if (exp % 2 == 1) {  // If exponent is odd, multiply result by base
+            result = (result * base) % mod;
+        }
+        base = (base * base) % mod;  // Square the base
+        exp /= 2;
+    }
+    return result;
 }
 
 /******************************************************************************/
@@ -111,13 +124,20 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
         1,302,93,91,505,319,137,145,
         1,302,93,91,505,319,137,145);
     __m256i h3_shu = mm256_shuffle_epi16_A(pre_h3, h3);
+
+    // printf("h3_s:");
+    // print_m256i_16bit_asint(h3_shu);
     
     __m256i mask_l4 = _mm256_set1_epi16(0x0F);
     __m256i l4 = _mm256_and_si256(a, mask_l4);
 
-    __m256i mask_l4_bit4 = _mm256_set1_epi16(0x4);
+    __m256i mask_l4_bit4 = _mm256_set1_epi16(0b1000);
     __m256i l4_bit4 = _mm256_and_si256(a, mask_l4_bit4);
-            l4_bit4 = _mm256_srli_epi16(a, 3);
+            l4_bit4 = _mm256_srli_epi16(l4_bit4, 3);
+    // _mm256_bsrli_epi128 vs _mm256_srli_epi16
+
+    // printf("l4b4:");
+    // print_m256i_16bit_asint(l4_bit4);
 
     __m256i l4_sub8 = _mm256_sub_epi16(l4, _mm256_set1_epi16(8));
 
@@ -126,12 +146,21 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
         1,16,256,24,384,36,67,54);
     __m256i l4_shu_0 = mm256_shuffle_epi16_A(pre_l4_0, l4);
 
+    // printf("l4s0:");
+    // print_m256i_16bit_asint(l4_shu_0);
+
     __m256i pre_l4_1 = _mm256_setr_epi16(
         355,81,278,376,417,55,371,337,
         355,81,278,376,417,55,371,337);
     __m256i l4_shu_1 = mm256_shuffle_epi16_A(pre_l4_1, l4_sub8);
 
+    // printf("l4s1:");
+    // print_m256i_16bit_asint(l4_shu_1);
+
     __m256i l4_shu = mm256_cmov_epu16_A(l4_bit4, l4_shu_1, l4_shu_0);
+
+    // printf("l4_s:");
+    // print_m256i_16bit_asint(l4_shu);
 
     __m256i r = mm256_mulmod509_epu16_B(h3_shu, l4_shu);
 
@@ -148,8 +177,7 @@ int main() {
         9, 10, 11, 12, 13, 14, 15, 16
     );
 
-    // int testv = 8;
-    // a = _mm256_set1_epi16(testv);
+    a = _mm256_set1_epi16(8);
 
     __m256i result = mm256_exp16mod509_epu16(a);
 
@@ -159,9 +187,27 @@ int main() {
     printf("r:   ");
     print_m256i_16bit_asint(result);
 
+    ////////////////////////////////////////////////////////////////////////////
+    for(int i=1; i<=127; i++){
+        printf(".");
+        a = _mm256_set1_epi16(i);
+        __m256i r = mm256_exp16mod509_epu16(a);
+        uint16_t arr[16];
+        _mm256_storeu_si256((__m256i*)arr, r);
+        uint64_t true_r = mod_exp(16, i, 509);
+        for(int j=0; j<16; j++){
+            if(arr[j] != true_r){
+                printf("\nError: %d %d %d\n", i, arr[j], true_r);
+                exit(1);
+            }
+        }
+    }
+    printf("\nOK\n");
+    ////////////////////////////////////////////////////////////////////////////
+
     return 0;
 }
 
 /*
-rm -f rtv16.o; gcc -o rtv16.o rtv16.c -mavx2; ./rtv16.o
+rm -f rtv16.o; gcc -o rtv16.o rtv16.c -mavx2 -lm; ./rtv16.o
 */
