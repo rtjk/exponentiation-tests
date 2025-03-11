@@ -1,6 +1,6 @@
 from math import log2, ceil, floor
 
-x = "1101"
+x = "11"
 
 y = int(x, 2)
 

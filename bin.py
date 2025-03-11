@@ -1,6 +1,6 @@
 from math import log2, ceil, floor
 
-x = 509*2
+x = (505*417)%509
 
 y = bin(x)[2:]
 

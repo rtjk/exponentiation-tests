@@ -68,12 +68,13 @@ __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
 
 /******************************************************************************/
 
-/* ******** */
+/* multiply 16-bit integers packed into 256-bit vectors and reduce the result
+   modulo 509: mulmod509(a[], b[]) returns c[] where c[i]=(a[i]*b[i])%509 */
 
 /******************************************************************************/
 
 // BROKEN
-__m256i mm256_mulmod509_epu16(__m256i a, __m256i b) {
+__m256i mm256_mulmod509_epu16_A(__m256i a, __m256i b) {
     
     __m256i mask0   = _mm256_setr_epi16(0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF);
     __m256i mask1   = _mm256_setr_epi16(0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0);
@@ -105,20 +106,38 @@ __m256i mm256_mulmod509_epu16(__m256i a, __m256i b) {
 
 /******************************************************************************/
 
+// OK
+__m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
+    /* multiply */
+    __m256i l  = _mm256_mullo_epi16(a, b);
+    __m256i h  = _mm256_mulhi_epu16(a, b);
+    /* unpack 16-bit to 32-bit */
+    __m256i u0 = _mm256_unpacklo_epi16(l, h);
+    __m256i u1 = _mm256_unpackhi_epi16(l, h);
+    /* reduce */
+    u0 = reduce_avx2_32(u0);
+    u1 = reduce_avx2_32(u1);
+    /* pack 32-bit to 16-bit */
+    __m256i r  = _mm256_packs_epi32(u0, u1);
+    return r;
+}
+
+/******************************************************************************/
+
 int main() {
 
     
     __m256i a = _mm256_setr_epi16(
-        3, 2, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 509
+        0, 505, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
     );
 
     __m256i b = _mm256_setr_epi16(
-        1, 2, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 2
+        0, 417, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
     );
 
-    __m256i result = mm256_mulmod509_epu16(a, b);
+    __m256i result = mm256_mulmod509_epu16_B(a, b);
 
     // Print the result
     printf("a:   ");

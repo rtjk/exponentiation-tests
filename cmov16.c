@@ -45,6 +45,8 @@ __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
 
 // try min or max to speed up (like in reduce_avx2_32)
 
+// try the sign extension to expand the zero or one to 16 bits
+
 /******************************************************************************/
 
 int main() {
