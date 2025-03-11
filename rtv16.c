@@ -32,6 +32,15 @@ void print_m256i_32bit(__m256i var) {
     printf("]\n");
 }
 
+void print_m256i_16bit_asint(__m256i var) {
+    unsigned short vals[16];  // 16 values, 2 bytes each (16 bits)
+    _mm256_storeu_si256((__m256i*)vals, var);  // Store 256 bits (16 values) into the vals array
+    printf("[ ");
+    for (int i = 0; i < 16; i++) {
+        printf("%d ", vals[i]);  // Print each value as a 4-digit hexadecimal number (16 bits)
+    }
+    printf("]\n");
+}
 
 /******************************************************************************/
 
@@ -51,11 +60,6 @@ __m256i reduce_avx2_32(__m256i a){
     return r;
 }
 
-void mm256_split(__m256i vec, __m128i *low, __m128i *high) {
-    *low  = _mm256_extracti128_si256(vec, 0);
-    *high = _mm256_extracti128_si256(vec, 1);
-}
-
 __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
     __m256i x1 = _mm256_setr_epi8(0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14, 0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14);
     __m256i x2 = _mm256_setr_epi8(0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1);
@@ -66,47 +70,16 @@ __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
     return b;
 }
 
-/******************************************************************************/
-
-/* multiply 16-bit integers packed into 256-bit vectors and reduce the result
-   modulo 509: mulmod509(a[], b[]) returns c[] where c[i]=(a[i]*b[i])%509 */
-
-/******************************************************************************/
-
-// BROKEN
-__m256i mm256_mulmod509_epu16_A(__m256i a, __m256i b) {
-    
-    __m256i mask0   = _mm256_setr_epi16(0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF);
-    __m256i mask1   = _mm256_setr_epi16(0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0);
-
-    // entend a and b to 32 bits
-    __m256i a0      = _mm256_and_si256(a, mask0);
-            a0      = _mm256_bsrli_epi128(a0, 2);
-    __m256i a1      = _mm256_and_si256(a, mask1);
-    __m256i b0      = _mm256_and_si256(b, mask0);
-            b0      = _mm256_bsrli_epi128(b0, 2);
-    __m256i b1      = _mm256_and_si256(b, mask1);
-
-    // multiply modulo 509
-    __m256i m0      = _mm256_mullo_epi32(a0, b0);
-            // m0      = reduce_avx2_32(m0);
-            m0      = _mm256_bslli_epi128(m0, 2);
-    __m256i m1      = _mm256_mullo_epi32(a1, b1);
-            // m1      = reduce_avx2_32(m1);
-
-    /// print m1
-    printf("m0:   ");
-    print_m256i_32bit(m0);
-
-    // reassemble
-    __m256i r       = _mm256_or_si256(m0, m1);
-    
+__m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
+    __m256i zeros  = _mm256_setzero_si256();
+    __m256i cmask  = _mm256_sub_epi16(zeros, c);
+    __m256i cmaskn = _mm256_xor_si256(cmask, _mm256_set1_epi16(0xFFFF));
+    __m256i tval   = _mm256_and_si256(cmask, t);
+    __m256i fval   = _mm256_and_si256(cmaskn, f);
+    __m256i r      = _mm256_or_si256(tval, fval);
     return r;
 }
 
-/******************************************************************************/
-
-// OK
 __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
     /* multiply */
     __m256i l = _mm256_mullo_epi16(a, b);
@@ -124,31 +97,70 @@ __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
 
 /******************************************************************************/
 
+/* for each 16-bit integer x packed into a 256-bit vector, with x in [1, 127],
+   compute: (16**x) mod 509 */
+
+/******************************************************************************/
+
+__m256i mm256_exp16mod509_epu16(__m256i a) {
+    
+    __m256i h3 = _mm256_srli_epi64(a, 4);
+
+    __m256i pre_h3 = _mm256_setr_epi16(
+        1,302,93,91,505,319,137,145,
+        1,302,93,91,505,319,137,145);
+    __m256i h3_shu = mm256_shuffle_epi16_A(pre_h3, h3);
+    
+    __m256i mask_l4 = _mm256_set1_epi16(0x0F);
+    __m256i l4 = _mm256_and_si256(a, mask_l4);
+
+    __m256i mask_l4_bit4 = _mm256_set1_epi16(0x4);
+    __m256i l4_bit4 = _mm256_and_si256(a, mask_l4_bit4);
+            l4_bit4 = _mm256_srli_epi64(a, 3);
+
+    __m256i l4_sub16 = _mm256_sub_epi16(l4, _mm256_set1_epi16(16));
+
+    __m256i pre_l4_0 = _mm256_setr_epi16(
+        1,16,256,24,384,36,67,54,
+        1,16,256,24,384,36,67,54);
+    __m256i l4_shu_0 = mm256_shuffle_epi16_A(pre_l4_0, l4);
+
+    __m256i pre_l4_1 = _mm256_setr_epi16(
+        355,81,278,376,417,55,371,337,
+        355,81,278,376,417,55,371,337);
+    __m256i l4_shu_1 = mm256_shuffle_epi16_A(pre_l4_1, l4_sub16);
+
+    __m256i l4_shu = mm256_cmov_epu16_A(l4_bit4, l4_shu_1, l4_shu_0);
+
+    printf("l4_s:");
+    print_m256i_16bit_asint(l4_shu);
+
+    __m256i r = mm256_mulmod509_epu16_B(h3_shu, l4_shu);
+
+    return r;
+
+}
+
+/******************************************************************************/
+
 int main() {
 
     __m256i a = _mm256_setr_epi16(
-        0, 505, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 508, 2
+        8, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
     );
 
-    __m256i b = _mm256_setr_epi16(
-        0, 417, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 508, 2
-    );
-
-    __m256i result = mm256_mulmod509_epu16_B(a, b);
+    __m256i result = mm256_exp16mod509_epu16(a);
 
     // Print the result
     printf("a:   ");
-    print_m256i_16bit(a);
-    printf("b:   ");
-    print_m256i_16bit(b);
-    printf("c:   ");
-    print_m256i_16bit(result);
+    print_m256i_16bit_asint(a);
+    printf("r:   ");
+    print_m256i_16bit_asint(result);
 
     return 0;
 }
 
 /*
-rm -f mulmod16.o; gcc -o mulmod16.o mulmod16.c -mavx2; ./mulmod16.o
+rm -f rtv16.o; gcc -o rtv16.o rtv16.c -mavx2; ./rtv16.o
 */

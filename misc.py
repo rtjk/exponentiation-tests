@@ -23,3 +23,7 @@ w = ( (16**(3*16)) * (16**13) ) % 509
 print(z)
 print(w)
 print(z == w)
+
+for x in range(1, 128):
+    y = (16**x) % 509
+    print(f"{x:3} {y:3}")
