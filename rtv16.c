@@ -102,9 +102,10 @@ __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
 
 /******************************************************************************/
 
+// OK
 __m256i mm256_exp16mod509_epu16(__m256i a) {
     
-    __m256i h3 = _mm256_srli_epi64(a, 4);
+    __m256i h3 = _mm256_srli_epi16(a, 4);
 
     __m256i pre_h3 = _mm256_setr_epi16(
         1,302,93,91,505,319,137,145,
@@ -116,9 +117,9 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
 
     __m256i mask_l4_bit4 = _mm256_set1_epi16(0x4);
     __m256i l4_bit4 = _mm256_and_si256(a, mask_l4_bit4);
-            l4_bit4 = _mm256_srli_epi64(a, 3);
+            l4_bit4 = _mm256_srli_epi16(a, 3);
 
-    __m256i l4_sub16 = _mm256_sub_epi16(l4, _mm256_set1_epi16(16));
+    __m256i l4_sub8 = _mm256_sub_epi16(l4, _mm256_set1_epi16(8));
 
     __m256i pre_l4_0 = _mm256_setr_epi16(
         1,16,256,24,384,36,67,54,
@@ -128,12 +129,9 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
     __m256i pre_l4_1 = _mm256_setr_epi16(
         355,81,278,376,417,55,371,337,
         355,81,278,376,417,55,371,337);
-    __m256i l4_shu_1 = mm256_shuffle_epi16_A(pre_l4_1, l4_sub16);
+    __m256i l4_shu_1 = mm256_shuffle_epi16_A(pre_l4_1, l4_sub8);
 
     __m256i l4_shu = mm256_cmov_epu16_A(l4_bit4, l4_shu_1, l4_shu_0);
-
-    printf("l4_s:");
-    print_m256i_16bit_asint(l4_shu);
 
     __m256i r = mm256_mulmod509_epu16_B(h3_shu, l4_shu);
 
@@ -146,9 +144,12 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
 int main() {
 
     __m256i a = _mm256_setr_epi16(
-        8, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16
     );
+
+    // int testv = 8;
+    // a = _mm256_set1_epi16(testv);
 
     __m256i result = mm256_exp16mod509_epu16(a);
 
