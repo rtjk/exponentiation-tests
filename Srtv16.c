@@ -5,20 +5,6 @@
 
 /******************************************************************************/
 
-long long mod_exp(long long base, long long exp, long long mod) {
-    long long result = 1;
-    while (exp > 0) {
-        if (exp % 2 == 1) {
-            result = (result * base) % mod;
-        }
-        base = (base * base) % mod;
-        exp /= 2;
-    }
-    return result;
-}
-
-/******************************************************************************/
-
 /* reduce modulo 509 eigth 32-bit integers packed into a 256-bit vector, using Barrett's method
  * each 32-bit integer sould be in the range [0, 508*508] i.e. the result of a mul in FP
  * however, the function actually works for integers in the wider range [0, 8339743] */
@@ -116,6 +102,21 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
 
     return r;
 
+}
+
+/******************************************************************************/
+
+/* reference modular exponentiation */
+long long mod_exp(long long base, long long exp, long long mod) {
+    long long result = 1;
+    while (exp > 0) {
+        if (exp % 2 == 1) {
+            result = (result * base) % mod;
+        }
+        base = (base * base) % mod;
+        exp /= 2;
+    }
+    return result;
 }
 
 /******************************************************************************/
