@@ -1,3 +1,9 @@
+#include "cpucycles.h"
+#include <time.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdalign.h>
+
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -65,7 +71,7 @@ uint16_t exp16mod509(uint16_t exponent) {
 
 /******************************************************************************/
 
-__m256i reduce_avx2_32(__m256i a){
+static inline __m256i reduce_avx2_32(__m256i a){
     int b_shift = 18; // ceil(log2(509))*2
     int b_mul = (((uint64_t)1U << b_shift) / 509);
     /* r = a - ((B_MUL * a) >> B_SHIFT) * P) */
@@ -81,7 +87,7 @@ __m256i reduce_avx2_32(__m256i a){
     return r;
 }
 
-__m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
+static inline __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
     __m256i x1 = _mm256_setr_epi8(0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14, 0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14);
     __m256i x2 = _mm256_setr_epi8(0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1);
     b = _mm256_adds_epu16(b, b);
@@ -91,7 +97,7 @@ __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
     return b;
 }
 
-__m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
+static inline __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
     __m256i zeros  = _mm256_setzero_si256();
     __m256i cmask  = _mm256_sub_epi16(zeros, c);
     __m256i cmaskn = _mm256_xor_si256(cmask, _mm256_set1_epi16(0xFFFF));
@@ -101,7 +107,7 @@ __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
     return r;
 }
 
-__m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
+static inline __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
     /* multiply */
     __m256i l = _mm256_mullo_epi16(a, b);
     __m256i h = _mm256_mulhi_epu16(a, b);
@@ -118,13 +124,13 @@ __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
 
 /******************************************************************************/
 
-/* for each 16-bit integer x packed into a 256-bit vector, with x in [1, 127],
-   compute: (16**x) mod 509 */
+#define N (106)
+#define EPI16_PER_REG 16
+#define ROUND_UP(amount, round_amt) ( ((amount+round_amt-1)/round_amt)*round_amt )
 
 /******************************************************************************/
 
-// OK
-__m256i mm256_exp16mod509_epu16(__m256i a) {
+static inline __m256i mm256_exp16mod509_epu16(__m256i a) {
     
     __m256i h3 = _mm256_srli_epi16(a, 4);
 
@@ -161,46 +167,129 @@ __m256i mm256_exp16mod509_epu16(__m256i a) {
 
 }
 
+static inline void exp16mod509_x16_par(uint16_t *r, uint8_t *a) {
+    
+    // a: convert from uint8 to uint16, expand, align
+    alignas(32) uint16_t a_align[ROUND_UP(N,EPI16_PER_REG)];
+    for (int i = 0; i < N; i++) {
+        a_align[i] = a[i];
+    }
+
+    // r: expand, align
+    alignas(32) uint16_t r_align[ROUND_UP(N,EPI16_PER_REG)];
+
+    for(int i = 0; i < ROUND_UP(N,EPI16_PER_REG)/EPI16_PER_REG; i++ ){
+        __m256i a_256 =  _mm256_load_si256( (__m256i const *) &a_align[i*EPI16_PER_REG] );
+        __m256i r_256 = mm256_exp16mod509_epu16(a_256);
+        _mm256_store_si256 ((__m256i *) &r_align[i*EPI16_PER_REG], r_256);
+    }
+    memcpy(r,r_align,N);
+}
+
 /******************************************************************************/
+
+#define FP_ELEM uint16_t
+#define P (509)
+#define FPRED_SINGLE(x) (((x) - (((uint64_t)(x) * 2160140723) >> 40) * P))
+#define FP_ELEM_CMOV(BIT,TRUE_V,FALSE_V)  ( (((FP_ELEM)0 - (BIT)) & (TRUE_V)) | (~((FP_ELEM)0 - (BIT)) & (FALSE_V)) )
+#define RESTR_G_GEN_1  ((FP_ELEM) 16)
+#define RESTR_G_GEN_2  ((FP_ELEM) 256)
+#define RESTR_G_GEN_4  ((FP_ELEM) 384)
+#define RESTR_G_GEN_8  ((FP_ELEM) 355)
+#define RESTR_G_GEN_16 ((FP_ELEM) 302)
+#define RESTR_G_GEN_32 ((FP_ELEM) 93)
+#define RESTR_G_GEN_64 ((FP_ELEM) 505)
+static inline FP_ELEM RESTR_TO_VAL(FP_ELEM x){
+    uint32_t res1, res2, res3, res4;
+    res1 = ( FP_ELEM_CMOV(((x >> 0) &1),RESTR_G_GEN_1 ,1)) *
+           ( FP_ELEM_CMOV(((x >> 1) &1),RESTR_G_GEN_2 ,1)) ;
+    res2 = ( FP_ELEM_CMOV(((x >> 2) &1),RESTR_G_GEN_4 ,1)) *
+           ( FP_ELEM_CMOV(((x >> 3) &1),RESTR_G_GEN_8 ,1)) ;
+    res3 = ( FP_ELEM_CMOV(((x >> 4) &1),RESTR_G_GEN_16,1)) *
+           ( FP_ELEM_CMOV(((x >> 5) &1),RESTR_G_GEN_32,1)) ;
+    res4 =   FP_ELEM_CMOV(((x >> 6) &1),RESTR_G_GEN_64,1);
+
+    /* Two intermediate reductions necessary:
+     *     RESTR_G_GEN_1*RESTR_G_GEN_2*RESTR_G_GEN_4*RESTR_G_GEN_8    < 2^32
+     *     RESTR_G_GEN_16*RESTR_G_GEN_32*RESTR_G_GEN_64               < 2^32 */
+    return FPRED_SINGLE( FPRED_SINGLE(res1 * res2) * FPRED_SINGLE(res3 * res4) );
+}
+
+static inline void exp16mod509_x16_ser(uint16_t *r, uint8_t *a) {
+    for (int i = 0; i < 16; i++) {
+        r[i] = FPRED_SINGLE(RESTR_TO_VAL(a[i]));
+    }
+}
+
+
+/******************************************************************************/
+
+static inline void rand_arr_16xN_mod509(uint8_t *a) {
+    for (int i = 0; i < N; i++) {
+        a[i] = rand() % 509;
+    }
+}
+
+/******************************************************************************/
+
+#define TESTS 10000000
+/*
+#define SERIAL 1
+#define TESTS 100
+*/
 
 int main() {
 
-    __m256i a = _mm256_setr_epi16(
-        1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 14, 15, 16
-    );
+    srand(time(0));
+    srand(0);
 
-    a = _mm256_set1_epi16(8);
+    long long count_1;
+    long long count_2;
+    long long sum = 0;
 
-    __m256i result = mm256_exp16mod509_epu16(a);
+    uint8_t a[N];
+    uint16_t r[N];
 
-    // Print the result
-    printf("a:   ");
-    print_m256i_16bit_asint(a);
-    printf("r:   ");
-    print_m256i_16bit_asint(result);
+    uint64_t throwaway = 0;
 
-    ////////////////////////////////////////////////////////////////////////////
-    for(int i=1; i<=127; i++){
-        printf(".");
-        a = _mm256_set1_epi16(i);
-        __m256i r = mm256_exp16mod509_epu16(a);
-        uint16_t arr[16];
-        _mm256_storeu_si256((__m256i*)arr, r);
-        uint64_t true_r = exp16mod509(i);
-        for(int j=0; j<16; j++){
-            if(arr[j] != true_r){
-                printf("\nError: %d %d %d\n", i, arr[j], true_r);
-                exit(1);
-            }
+    for(long long test=0; test<TESTS; test++){
+
+        rand_arr_16xN_mod509(a);
+
+        count_1 = cpucycles();
+        ////////////////////////////////////////////////////////////////////////////
+        #if SERIAL
+            exp16mod509_x16_ser(r, a);
+        #else
+            exp16mod509_x16_par(r, a);
+        #endif
+        ////////////////////////////////////////////////////////////////////////////
+        count_2 = cpucycles();
+        sum += count_2 - count_1;
+
+        // throwaway
+        for(int i=0; i<16; i++){
+            throwaway += r[i];
+            throwaway %= 10000;
         }
-    }
-    printf("\nOK\n");
-    ////////////////////////////////////////////////////////////////////////////
 
-    return 0;
+    }
+    printf("[%lu]Cycles: %lld\n", throwaway, sum/TESTS);
+
+    return throwaway;
 }
 
+// 16x16 (a single 256-bit register) 
+// par 27
+// ser 200
+
+// 16x106 (7 256-bit registers)
+// par 296
+// ser 303
+
 /*
-rm -f rtv16.o; gcc -o rtv16.o rtv16.c -mavx2 -lm -fsanitize=address; ./rtv16.o
+rm -f c-rtv16.o; gcc -o c-rtv16.o c-rtv16.c -march=native -O3 -lcpucycles; taskset --cpu-list 0 ./c-rtv16.o
+rm -f c-rtv16.o; gcc -o c-rtv16.o c-rtv16.c -march=native -O3 -lcpucycles; echo "COMPILED!"
+taskset --cpu-list 0 ./c-rtv16.o
+-g3 -fsanitize=address
 */
