@@ -1,3 +1,5 @@
+#include "cpucycles.h"
+
 #include <assert.h>
 #include <immintrin.h>
 #include <stdalign.h>
@@ -69,7 +71,7 @@ uint16_t exp16mod509(uint16_t exponent) {
 
 /******************************************************************************/
 
-__m256i mm256_mod509_epu32(__m256i a){
+static inline __m256i mm256_mod509_epu32(__m256i a){
     int b_shift = 18; // ceil(log2(509))*2
     int b_mul = (((uint64_t)1U << b_shift) / 509);
     /* r = a - ((B_MUL * a) >> B_SHIFT) * P) */
@@ -85,7 +87,7 @@ __m256i mm256_mod509_epu32(__m256i a){
     return r;
 }
 
-__m256i mm256_mod509_epu16(__m256i a){
+static inline __m256i mm256_mod509_epu16(__m256i a){
     /* r = min(r, r - P) */
     __m256i p_256 = _mm256_set1_epi16(509);
     __m256i as= _mm256_sub_epi16(a, p_256);
@@ -93,7 +95,7 @@ __m256i mm256_mod509_epu16(__m256i a){
     // works only up to 508*2 !!!
 }
 
-__m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
+static inline __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
     __m256i x1 = _mm256_setr_epi8(0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14, 0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14);
     __m256i x2 = _mm256_setr_epi8(0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1);
     b = _mm256_adds_epu16(b, b);
@@ -103,7 +105,7 @@ __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
     return b;
 }
 
-__m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
+static inline __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
     __m256i zeros  = _mm256_setzero_si256();
     __m256i cmask  = _mm256_sub_epi16(zeros, c);
     __m256i cmaskn = _mm256_xor_si256(cmask, _mm256_set1_epi16(0xFFFF));
@@ -113,7 +115,7 @@ __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
     return r;
 }
 
-__m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
+static inline __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
     /* multiply */
     __m256i l = _mm256_mullo_epi16(a, b);
     __m256i h = _mm256_mulhi_epu16(a, b);
@@ -128,7 +130,7 @@ __m256i mm256_mulmod509_epu16_B(__m256i a, __m256i b) {
     return r;
 }
 
-__m256i mm256_exp16mod509_epu16(__m256i a) {
+static inline __m256i mm256_exp16mod509_epu16(__m256i a) {
     
     __m256i h3 = _mm256_srli_epi16(a, 4);
 
@@ -202,10 +204,7 @@ static inline FP_ELEM RESTR_TO_VAL(FP_ELEM x){
 
 /******************************************************************************/
 
-void fp_vec_by_restr_vec_scaled_ser(FP_ELEM res[N],
-                                const FZ_ELEM e[N],
-                                const FP_ELEM chall_1,
-                                const FP_ELEM u_prime[N]){
+static inline void fp_vec_by_restr_vec_scaled_ser(FP_ELEM res[N], const FZ_ELEM e[N], const FP_ELEM chall_1, const FP_ELEM u_prime[N]){
     for(int i = 0; i < N; i++){
         res[i] = FPRED_SINGLE( (FP_DOUBLEPREC) u_prime[i] + (FP_DOUBLEPREC) RESTR_TO_VAL(e[i]) * (FP_DOUBLEPREC) chall_1) ;
     }
@@ -213,8 +212,7 @@ void fp_vec_by_restr_vec_scaled_ser(FP_ELEM res[N],
 
 /******************************************************************************/
 
-// OK
-void fp_vec_by_restr_vec_scaled_par(uint16_t r[N], const uint8_t vr[N], const uint16_t el, const uint16_t vn[N]) {
+static inline void fp_vec_by_restr_vec_scaled_par(uint16_t r[N], const uint8_t vr[N], const uint16_t el, const uint16_t vn[N]) {
 
     // r: expand, align
     alignas(32) uint16_t r_x[ROUND_UP(N,EPI16_PER_REG)];
@@ -262,47 +260,63 @@ static inline void rand_arr_8xN_mod127(uint8_t *a) {
 
 /******************************************************************************/
 
-#define TESTS 10000
+#define TESTS 100000
+/*
+#define SERIAL 1
+#define TESTS 100
+*/
 
 int main() {
 
+    srand(time(0));
+    srand(0);
+    
+    long long count_1;
+    long long count_2;
+    long long sum = 0;
+    uint64_t throwaway = 0;
+    
     uint16_t r_ser[N];
     uint16_t r_par[N];
     uint8_t vr[N];
     uint16_t vn[N];
     uint16_t el; 
-    
-    srand(time(0));
-    srand(0);
-    
-    for(int i = 0; i < TESTS; i++) {
+
+    for(long long test=0; test<TESTS; test++){
         
         rand_arr_8xN_mod127(vr);
         rand_arr_16xN_mod509(vn);
         el = rand() % 509;
-        
-        // memset(vr, 127, N*sizeof(uint8_t));
-        // memset(vn, 0, N*sizeof(uint16_t));
-        // el = 2;
-        
-        fp_vec_by_restr_vec_scaled_ser(r_ser, vr, el, vn);
-        fp_vec_by_restr_vec_scaled_par(r_par, vr, el, vn);
 
-        for(int j=0; j<N; j++){
-            if(r_ser[j] != r_par[j]){
-                printf("Error: \n i=%d \n j=%d \n vr[j]=%d \n vn[j]=%d \n el=%d \n r_ser[j]=%d \n r_par[j]=%d\n", i, j, vr[j], vn[j], el, r_ser[j], r_par[j]);
-                exit(1);
-            }
+        count_1 = cpucycles();
+        ////////////////////////////////////////////////////////////////////////////
+        #if SERIAL
+            fp_vec_by_restr_vec_scaled_ser(r_ser, vr, el, vn);
+            #define R r_ser
+        #else
+            fp_vec_by_restr_vec_scaled_par(r_par, vr, el, vn);
+            #define R r_par
+        #endif
+        ////////////////////////////////////////////////////////////////////////////
+        count_2 = cpucycles();
+        sum += count_2 - count_1;
+
+        // throwaway
+        for(int i=0; i<N; i++){
+            throwaway += R[i];
+            throwaway %= 10000;
         }
     
     }
 
-    printf("\nOK\n");
+    printf("[%lu]Cycles: %lld\n", throwaway, sum/TESTS);
 
-    return 0;
+    return throwaway;
 }
 
 /*
-rm -f vbv16.o; gcc -o vbv16.o vbv16.c -mavx2 -lm -fsanitize=address; ./vbv16.o
+rm -f c-vbv16.o; gcc -o c-vbv16.o c-vbv16.c -march=native -O3 -lcpucycles; taskset --cpu-list 0 ./c-vbv16.o
+rm -f c-vbv16.o; gcc -o c-vbv16.o c-vbv16.c -march=native -O3 -lcpucycles; echo "COMPILED!"
+taskset --cpu-list 0 ./c-vbv16.o
+-g3 -fsanitize=address
 */
-
