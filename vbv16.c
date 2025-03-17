@@ -254,6 +254,8 @@ static inline void rand_arr_16xN_mod509(uint16_t *a) {
     }
 }
 
+
+////////////////////////////// +1 ???
 static inline void rand_arr_8xN_mod127(uint8_t *a) {
     for (int i = 0; i < N; i++) {
         a[i] = (rand() % 128) + 1;
