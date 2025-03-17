@@ -117,7 +117,8 @@ static inline __m256i mm256_mod509_epu16(__m256i a) {
 }
 
 /* shuffle sixteen 16-bit integers packed into a 256-bit vector:
- * shuffle(a[], b[]) returns c[] where c[i]=a[b[i]] */
+ * shuffle(a[], b[]) returns c[] where c[i]=a[b[i]] 
+ * operates within 128-bit lanes, so b[i] must be in the range [0,7] */
 static inline __m256i mm256_shuffle_epi16(__m256i a, __m256i b) {
     __m256i x1 = _mm256_setr_epi8(0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14, 0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14);
     __m256i x2 = _mm256_setr_epi8(0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1);
@@ -191,50 +192,50 @@ static inline __m256i mm256_exp16mod509_epu16(__m256i a) {
 
 /**************************** optimized functions *****************************/
 
-void fp_vec_by_restr_vec_scaled_PAR(FP_ELEM r[N], const FZ_ELEM vr[N], const FP_ELEM el, const FP_ELEM vn[N]) {
+void fp_vec_by_restr_vec_scaled_PAR(FP_ELEM res[N], const FZ_ELEM e[N], const FP_ELEM chall_1, const FP_ELEM u_prime[N]) {
 
-    /* r: expand, align */
-    alignas(32) FP_ELEM r_x[ROUND_UP(N,EPI16_PER_REG)];
-    /* vr: convert from uint8 to uint16, expand, align */
-    alignas(32) FP_ELEM vr_x[ROUND_UP(N,EPI16_PER_REG)];
+    /* res: expand, align */
+    alignas(32) FP_ELEM res_x[ROUND_UP(N,EPI16_PER_REG)];
+    /* e: convert from uint8 to uint16, expand, align */
+    alignas(32) FP_ELEM e_x[ROUND_UP(N,EPI16_PER_REG)];
     for (int i = 0; i < N; i++) {
-        vr_x[i] = vr[i];
+        e_x[i] = e[i];
     }
-    /* el: convert to m256i */
-    __m256i el_256 = _mm256_set1_epi16(el);
-    /* vn: expand, align */
-    alignas(32) FP_ELEM vn_x[ROUND_UP(N,EPI16_PER_REG)];
-    memcpy(vn_x, vn, N*sizeof(FP_ELEM));
+    /* chall_1: convert to m256i */
+    __m256i chall_1_256 = _mm256_set1_epi16(chall_1);
+    /* u_prime: expand, align */
+    alignas(32) FP_ELEM u_prime_x[ROUND_UP(N,EPI16_PER_REG)];
+    memcpy(u_prime_x, u_prime, N*sizeof(FP_ELEM));
 
-    /* r = vn + RTV(vr) * el */
-    for(int i = 0; i < ROUND_UP(N,EPI16_PER_REG)/EPI16_PER_REG; i++ ) {
-        __m256i vn_256 = _mm256_load_si256( (__m256i const *) &vn_x[i*EPI16_PER_REG] );
-        __m256i vr_256 = _mm256_load_si256( (__m256i const *) &vr_x[i*EPI16_PER_REG] );
+    /* res = u_prime + RTV(e) * chall_1 */
+    for(int i = 0; i < ROUND_UP(N,EPI16_PER_REG)/EPI16_PER_REG; i++ ){
+        __m256i u_prime_256 = _mm256_load_si256( (__m256i const *) &u_prime_x[i*EPI16_PER_REG] );
+        __m256i e_256 = _mm256_load_si256( (__m256i const *) &e_x[i*EPI16_PER_REG] );
         __m256i r_256;
-        r_256 = mm256_exp16mod509_epu16(vr_256);
-        r_256 = mm256_mulmod509_epu16(r_256, el_256);
-        r_256 = _mm256_add_epi16(r_256, vn_256);
+        r_256 = mm256_exp16mod509_epu16(e_256);
+        r_256 = mm256_mulmod509_epu16(r_256, chall_1_256);
+        r_256 = _mm256_add_epi16(r_256, u_prime_256);
         r_256 = mm256_mod509_epu16(r_256);
-        _mm256_store_si256 ((__m256i *) &r_x[i*EPI16_PER_REG], r_256);
+        _mm256_store_si256 ((__m256i *) &res_x[i*EPI16_PER_REG], r_256);
     }
-    memcpy(r, r_x, N*sizeof(FP_ELEM));
+    memcpy(res, res_x, N*sizeof(FP_ELEM));
 }
 
-void convert_restr_vec_to_fp_PAR(FP_ELEM r[N], const FZ_ELEM vr[N]) {
-    /* r: expand, align */
-    alignas(32) FP_ELEM r_x[ROUND_UP(N,EPI16_PER_REG)];
-    /* vr: convert from uint8 to uint16, expand, align */
-    alignas(32) FP_ELEM vr_x[ROUND_UP(N,EPI16_PER_REG)];
+void convert_restr_vec_to_fp_PAR(FP_ELEM res[N], const FZ_ELEM in[N]){
+    /* res: expand, align */
+    alignas(32) FP_ELEM res_x[ROUND_UP(N,EPI16_PER_REG)];
+    /* in: convert from uint8 to uint16, expand, align */
+    alignas(32) FP_ELEM in_x[ROUND_UP(N,EPI16_PER_REG)];
     for (int i = 0; i < N; i++) {
-        vr_x[i] = vr[i];
+        in_x[i] = in[i];
     }
 
-    for(int i = 0; i < ROUND_UP(N,EPI16_PER_REG)/EPI16_PER_REG; i++ ) {
-        __m256i vr_256 = _mm256_load_si256( (__m256i const *) &vr_x[i*EPI16_PER_REG] );
-        __m256i r_256 = mm256_exp16mod509_epu16(vr_256);
-        _mm256_store_si256 ((__m256i *) &r_x[i*EPI16_PER_REG], r_256);
+    for(int i = 0; i < ROUND_UP(N,EPI16_PER_REG)/EPI16_PER_REG; i++ ){
+        __m256i in_256 = _mm256_load_si256( (__m256i const *) &in_x[i*EPI16_PER_REG] );
+        __m256i res_256 = mm256_exp16mod509_epu16(in_256);
+        _mm256_store_si256 ((__m256i *) &res_x[i*EPI16_PER_REG], res_256);
     }
-    memcpy(r, r_x, N*sizeof(FP_ELEM));
+    memcpy(res, res_x, N*sizeof(FP_ELEM));
 }
 
 void fp_vec_by_fp_matrix_PAR(FP_ELEM res[N-K], FP_ELEM e[N], FP_DOUBLEPREC V_tr[K][ROUND_UP(N-K,EPI32_PER_REG)]){
