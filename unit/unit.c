@@ -10,13 +10,23 @@
 /****************************** RSDPG parameters ******************************/
 
 /*
-#define N (55)
-#define N (79)
+#define RSDPG1
+#define RSDPG3
 */
-#define N (106)
+#define RSDPG5
 
 #if (1)
 #define P (509)
+#if defined(RSDPG1)
+    #define N (55)
+    #define K (36)
+#elif defined(RSDPG3)
+    #define N (79)
+    #define K (48)
+#elif defined(RSDPG5)
+    #define N (106)
+    #define K (69)
+#endif
 #define EPI16_PER_REG 16
 #define ROUND_UP(amount, round_amt) ( ((amount+round_amt-1)/round_amt)*round_amt )
 #define FP_ELEM uint16_t
@@ -59,6 +69,15 @@ void convert_restr_vec_to_fp(FP_ELEM res[N], const FZ_ELEM in[N]) {
 void fp_vec_by_restr_vec_scaled(FP_ELEM res[N], const FZ_ELEM e[N], const FP_ELEM chall_1, const FP_ELEM u_prime[N]) {
     for(int i = 0; i < N; i++) {
         res[i] = FPRED_SINGLE( (FP_DOUBLEPREC) u_prime[i] + (FP_DOUBLEPREC) RESTR_TO_VAL(e[i]) * (FP_DOUBLEPREC) chall_1) ;
+    }
+}
+
+void fp_vec_by_fp_matrix(FP_ELEM res[N-K], FP_ELEM e[N], FP_ELEM V_tr[K][N-K]){
+    memcpy(res,e+K,(N-K)*sizeof(FP_ELEM));
+    for(int i = 0; i < K; i++){
+        for(int j = 0; j < N-K; j++){
+            res[j] = FPRED_DOUBLE( (FP_DOUBLEPREC) res[j] + (FP_DOUBLEPREC) e[i] * (FP_DOUBLEPREC) V_tr[i][j]);
+        }
     }
 }
 
@@ -165,8 +184,6 @@ static inline __m256i mm256_exp16mod509_epu16(__m256i a) {
     return r;
 }
 
-//////////////////// fp_vec_by_fp_matrix
-
 /**************************** optimized functions *****************************/
 
 void fp_vec_by_restr_vec_scaled_PAR(FP_ELEM r[N], const FZ_ELEM vr[N], const FP_ELEM el, const FP_ELEM vn[N]) {
@@ -215,6 +232,36 @@ void convert_restr_vec_to_fp_PAR(FP_ELEM r[N], const FZ_ELEM vr[N]) {
     memcpy(r, r_x, N*sizeof(FP_ELEM));
 }
 
+void fp_vec_by_fp_matrix_PAR(FP_ELEM res[N-K], FP_ELEM e[N], FP_DOUBLEPREC V_tr[K][ROUND_UP(N-K,EPI32_PER_REG)]){
+
+    alignas(EPI8_PER_REG) FP_DOUBLEPREC res_dprec[ROUND_UP(N-K,EPI32_PER_REG)] = {0};
+    for(int i=0; i< N-K;i++) {
+        res_dprec[i]=e[K+i];
+    }
+
+    for(int i = 0; i < K; i++){
+        __m256i e_coeff = _mm256_set1_epi32(e[i]);
+        for(int j = 0; j < ROUND_UP(N-K,EPI32_PER_REG)/EPI32_PER_REG; j++){
+            __m256i res_w = _mm256_load_si256((__m256i const *) &res_dprec[j*EPI32_PER_REG] );
+            __m256i V_tr_slice = _mm256_lddqu_si256((__m256i const *) &V_tr[i][j*EPI32_PER_REG] );
+            __m256i a  = _mm256_mullo_epi32(e_coeff, V_tr_slice);
+            /* add to result */
+            res_w = _mm256_add_epi32(res_w, a);
+            /* - the previous sum is performed K times with K <= 69
+             * - adding each time a value "a" in the range [0,(P-1)*(P-1)] 
+             * - the reduction function mm256_mod509_epu32(x) works for x < 8339743
+             * therefore 3 reductions are enough */
+            if(i == K/3 || i == (K/3)*2 || i == K-1){
+                res_w  = mm256_mod509_epu32(res_w);
+            }
+            /* store back */
+            _mm256_store_si256 ((__m256i *) &res_dprec[j*EPI32_PER_REG], res_w);
+        }
+    }
+    for(int i=0; i< N-K;i++) {
+        res[i] = res_dprec[i];
+    }
+}
 
 /****************************** testing utility *******************************/
 
@@ -239,7 +286,19 @@ void rand_arr_8xN_1to127(uint8_t *a) {
     }
 }
 
-/***************************** testing functions ******************************/
+void rand_arr_16x16_mod509(uint16_t *a) {
+    for (int i = 0; i < 16; i++) {
+        a[i] = rand() % 509;
+    }
+}
+
+void rand_arr_16xL_modM(uint16_t *a, uint64_t length, uint16_t mod) {
+    for (int i = 0; i < length; i++) {
+        a[i] = rand() % mod;
+    }
+}
+
+/************************ iterative testing functions *************************/
 
 void TEST_mm256_mod509_epu32() {
     printf("TEST_mm256_mod509_epu32\n");
@@ -273,15 +332,28 @@ void TEST_mm256_mod509_epu16() {
     }
 }
 
-void TEST_mm256_shuffle_epi16() {}
-
-void TEST_mm256_cmov_epu16() {}
-
-void TEST_mm256_mulmod509_epu16() {}
+void TEST_mm256_mulmod509_epu16() {
+    printf("TEST_mm256_mulmod509_epu16\n");
+    for(uint16_t i=0; i<509; i++) {
+        for(uint16_t j=0; j<509; j++){
+            __m256i a = _mm256_set1_epi16(i);
+            __m256i b = _mm256_set1_epi16(j);
+            __m256i r = mm256_mulmod509_epu16(a, b);
+            uint16_t arr[16];
+            _mm256_storeu_si256((__m256i*)arr, r);
+            for(int k=0; k<16; k++) {
+                if(arr[k] != (i*j) % 509) {
+                    printf("Error: %d %d %d %d\n", i, j, arr[k], (i*j) % 509);
+                    exit(1);
+                }
+            }
+        }
+    }
+}
 
 void TEST_mm256_exp16mod509_epu16() {
     printf("TEST_mm256_exp16mod509_epu16\n");
-    for(int i=1; i<=127; i++) {
+    for(uint16_t i=1; i<=127; i++) {
         __m256i a = _mm256_set1_epi16(i);
         __m256i r = mm256_exp16mod509_epu16(a);
         uint16_t arr[16];
@@ -296,8 +368,72 @@ void TEST_mm256_exp16mod509_epu16() {
     }
 }
 
-void TEST_fp_vec_by_restr_vec_scaled_PAR(uint64_t random_tests) {
-    printf("TEST_fp_vec_by_restr_vec_scaled_PAR [%lld]\n", random_tests);
+void TEST_convert_restr_vec_to_fp_PAR() {
+    printf("TEST_convert_restr_vec_to_fp_PAR\n");
+}
+
+/************************** random testing functions **************************/
+
+void TEST_RAND_mm256_shuffle_epi16(uint64_t random_tests) {
+    printf("TEST_RAND_mm256_shuffle_epi16 [%lld]\n", random_tests);
+    uint16_t a[16];
+    uint16_t b[16];
+    uint16_t res_par[16];
+    for(int i = 0; i < random_tests; i++) {
+        rand_arr_16xL_modM(a, 16, UINT16_MAX);
+        rand_arr_16xL_modM(b, 16, 8);
+        __m256i a_256 = _mm256_loadu_si256((__m256i*)a);
+        __m256i b_256 = _mm256_loadu_si256((__m256i*)b);
+        __m256i res_256 = mm256_shuffle_epi16(a_256, b_256);
+        _mm256_storeu_si256((__m256i*)res_par, res_256);
+        // first 128-bit lane
+        for(int j=0; j<=7; j++) {
+            uint16_t res_ser = a[b[j]];
+            if(res_par[j] != res_ser) {
+                printf("Error: \n i=%d \n j=%d \n a[j]=%d \n b[j]=%d \n res_ser[j]=%d \n res_par[j]=%d\n", i, j, a[j], b[j], res_par[j]);
+                exit(1);
+            }
+        }
+        // second 128-bit lane
+        for(int j=8; j<16; j++) {
+            uint16_t res_ser = a[b[j]+8];
+            if(res_par[j] != res_ser) {
+                printf("Error: \n i=%d \n j=%d \n a[j]=%d \n b[j]=%d \n res_ser[j]=%d \n res_par[j]=%d\n", i, j, a[j], b[j], res_par[j]);
+                exit(1);
+            }
+        }
+    }
+}
+
+void TEST_RAND_mm256_cmov_epu16(uint64_t random_tests) {
+    printf("TEST_RAND_mm256_cmov_epu16 [%lld]\n", random_tests);
+    uint16_t tv[16];
+    uint16_t fv[16];
+    uint16_t cond[16];
+    uint16_t res_par[16];
+    for(int i = 0; i < random_tests; i++) {
+        rand_arr_16xL_modM(tv, 16, UINT16_MAX);
+        rand_arr_16xL_modM(fv, 16, UINT16_MAX);
+        rand_arr_16xL_modM(cond, 16, 2);
+        __m256i tv_256 = _mm256_loadu_si256((__m256i*)tv);
+        __m256i fv_256 = _mm256_loadu_si256((__m256i*)fv);
+        __m256i cond_256 = _mm256_loadu_si256((__m256i*)cond);
+        __m256i res_256 = mm256_cmov_epu16(cond_256, tv_256, fv_256);
+        _mm256_storeu_si256((__m256i*)res_par, res_256);
+        for(int j=0; j<16; j++) {
+            uint16_t res_ser = FP_ELEM_CMOV(cond[j], tv[j], fv[j]);
+            assert( res_ser == (cond[j] ? tv[j] : fv[j]) );
+            if(res_par[j] != res_ser) {
+                printf("Error: \n i=%d \n j=%d \n tv[j]=%d \n fv[j]=%d \n cond[j]=%d \n res_ser[j]=%d \n res_par[j]=%d\n", i, j, tv[j], fv[j], cond[j], res_ser, res_par[j]);
+                exit(1);
+            }
+        }
+    }
+
+}
+
+void TEST_RAND_fp_vec_by_restr_vec_scaled_PAR(uint64_t random_tests) {
+    printf("TEST_RAND_fp_vec_by_restr_vec_scaled_PAR [%lld]\n", random_tests);
     uint16_t r_ser[N];
     uint16_t r_par[N];
     uint8_t vr[N];
@@ -319,25 +455,44 @@ void TEST_fp_vec_by_restr_vec_scaled_PAR(uint64_t random_tests) {
     }
 }
 
-void TEST_convert_restr_vec_to_fp_PAR() {}
+void TEST_RAND_fp_vec_by_fp_matrix(uint64_t random_tests) {}
 
 /******************************************************************************/
 
-#define TESTS 10000
+/*
+                                    ITEERATIVE      RANDOM
+    mm256_mod509_epu32              x               -
+    mm256_mod509_epu16              x               -
+    mm256_shuffle_epi16                             x
+    mm256_cmov_epu16                                x
+    mm256_mulmod509_epu16           x               -
+    mm256_exp16mod509_epu16         x               -
+    fp_vec_by_restr_vec_scaled                      x
+    fp_vec_by_fp_matrix                             
+    convert_restr_vec_to_fp         x               -
+*/
+
+/******************************************************************************/
+
+#define TESTS 100000
 
 int main() {
 
-    srand(time(0));
-    srand(0);
+    srand(time(0)); // non reproducible
+    srand(0);       // reproducible
 
     TEST_mm256_mod509_epu32();
     TEST_mm256_mod509_epu16();
-    TEST_mm256_shuffle_epi16();
-    TEST_mm256_cmov_epu16();
     TEST_mm256_mulmod509_epu16();
     TEST_mm256_exp16mod509_epu16();
-    TEST_fp_vec_by_restr_vec_scaled_PAR(TESTS);
     TEST_convert_restr_vec_to_fp_PAR();
+    
+    printf("\n");
+    
+    TEST_RAND_mm256_shuffle_epi16(TESTS);
+    TEST_RAND_mm256_cmov_epu16(TESTS);
+    TEST_RAND_fp_vec_by_restr_vec_scaled_PAR(TESTS);
+    TEST_RAND_fp_vec_by_fp_matrix(TESTS);
 
     printf("\nOK\n");
 
@@ -345,6 +500,7 @@ int main() {
 }
 
 /*
+RSDPG_avx2_arith_tests.
 rm -f unit.o; gcc -o unit.o unit.c -march=native -g3 -fsanitize=address; ./unit.o
 */
 
