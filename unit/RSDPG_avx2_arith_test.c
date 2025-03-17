@@ -538,7 +538,7 @@ void TEST_RAND_fp_vec_by_restr_vec_scaled_PAR(uint64_t random_tests) {
 }
 
 void TEST_RAND_convert_restr_vec_to_fp_PAR(uint64_t random_tests) {
-    printf("TEST_convert_restr_vec_to_fp_PAR [%lld]\n", random_tests);
+    printf("TEST_RAND_convert_restr_vec_to_fp_PAR [%lld]\n", random_tests);
     uint16_t res_ser[N];
     uint16_t res_par[N];
     uint8_t exponents[N];
