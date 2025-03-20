@@ -108,7 +108,7 @@ static inline __m256i mm256_shuffle_epi16_A(__m256i a, __m256i b) {
 static inline __m256i mm256_cmov_epu16_A(__m256i c, __m256i t, __m256i f) {
     __m256i zeros  = _mm256_setzero_si256();
     __m256i cmask  = _mm256_sub_epi16(zeros, c);
-    __m256i cmaskn = _mm256_xor_si256(cmask, _mm256_set1_epi16(0xFFFF));
+    __m256i cmaskn = _mm256_xor_si256(cmask, _mm256_set1_epi16(-1));
     __m256i tval   = _mm256_and_si256(cmask, t);
     __m256i fval   = _mm256_and_si256(cmaskn, f);
     __m256i r      = _mm256_or_si256(tval, fval);
@@ -142,7 +142,7 @@ static inline __m256i mm256_exp16mod509_epu16(__m256i a) {
     __m256i mask_l4 = _mm256_set1_epi16(0x0F);
     __m256i l4 = _mm256_and_si256(a, mask_l4);
 
-    __m256i mask_l4_bit4 = _mm256_set1_epi16(0b1000);
+    __m256i mask_l4_bit4 = _mm256_set1_epi16(0x8);
     __m256i l4_bit4 = _mm256_and_si256(a, mask_l4_bit4);
             l4_bit4 = _mm256_srli_epi16(l4_bit4, 3);
     // _mm256_bsrli_epi128 vs _mm256_srli_epi16

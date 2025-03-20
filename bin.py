@@ -1,6 +1,6 @@
 from math import log2, ceil, floor
 
-x = 8
+x = 508*2
 
 y = bin(x)[2:]
 
